@@ -23,7 +23,7 @@ scale_fill_discrete = scale_fill_viridis_d
 
 ## Question 1
 
-## Question 2: import and tidy data
+## Question 2: iterate the importing and tidying of data
 First I used `list.files` to make a list of the file names. Then I created a function that would read in a file and tidy it into the proper format. Then I used `map` with this new function and the list of names, and `bind_rows` to create the final dataframe.
 ```{r}
 names = list.files(path="data", full.names=TRUE)
@@ -56,8 +56,64 @@ output |>
   mutate(week_num = as.numeric(week_no)) |>
   ggplot(aes(x=week_num, y=value, color=id)) + geom_line() + facet_grid(~arm)
 ```
+
 Overall, the experimental group saw large increases in their measured values while the control group did not change much. There was a big jump around week 1-2 for the experimental group which continued to increase at a less steep rate to week 8. The control group seemed to fluctuate more around the value of 0, with more inconsistencies in increasing or decreasing behaviors. 
 
-## Question 3
+## Question 3: simulate power in one-sample t-test
+First, a function to calculate the mu_hat and p-value using the t-test was created. Then a new dataframe using `map` was used to simulate this function 5000 times.
+```{r}
+sim_mean_ttest = function(mu) {
+  data = tibble(
+    x = rnorm(n=30, mean=mu, sd=5)
+  )
+  
+  output = data |> 
+    t.test() |> 
+    broom::tidy() |>
+    select(estimate, p.value) |>
+    rename(mu_hat=estimate, pval=p.value)
+}
 
+sim_results = expand_grid(
+  mu_df = c(0,1,2,3,4,5,6),
+  iter = 1:5000
+) |>
+  mutate(
+    estimate = map(mu_df, sim_mean_ttest)
+  ) |>
+  unnest(estimate)
+```
+
+Next are plots of the simulated data.
+```{r}
+sim_results |>
+  group_by(mu_df) |>
+  summarize(
+    rej = sum(pval < 0.05),
+    prop = rej/5000
+  ) |>
+  ggplot(aes(x=mu_df, y=prop)) + geom_line()
+```
+
+As effect size increases, power also increases (the proportion of estimates where the null was rejected increases). This is because the difference needed for statistical significance is bigger so it becomes more likely that you will reject the null. 
+
+```{r}
+true_df = sim_results |>
+  group_by(mu_df) |>
+  summarize(
+    mean_mu = mean(mu_hat)
+  )
+
+rej_df = sim_results |>
+  filter(pval < 0.05) |>
+  group_by(mu_df) |>
+  summarize(
+    mean_mu = mean(mu_hat)
+  )
+
+ggplot(true_df, aes(x=mu_df, y=mean_mu)) + 
+  geom_line() +
+  geom_line(data=rej_df, color="red")
+```
+In this plot, the red line shows the association between true mu and average estimate of mu-hat for only those samples where the null was rejected, while the black line contains all samples. The sample average of mu-hat for only the null-rejected data does not approximate the true value of mu when the effect size is smaller, around 0-3. Around 3-4, the red line starts to approach the black line and does approximate the true value of mu as effect size increases.
 
