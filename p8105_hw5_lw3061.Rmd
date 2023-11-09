@@ -21,7 +21,55 @@ scale_colour_discrete = scale_colour_viridis_d
 scale_fill_discrete = scale_fill_viridis_d
 ```
 
-## Question 1
+## Question 1: WP unsolved homicides data
+```{r}
+homicide = 
+  read_csv("homicide-data.csv") |> 
+  janitor::clean_names() |>
+  separate(reported_date, into=c("year","month","day"), sep=c(4,6)) |>
+  mutate(city_state = str_c(city, ", ", state))
+```
+
+The raw data has `r nrow(homicide)` homicides between 2010 and 2016. It includes information about the `reported_date` of murder, which I separated into `year`,`month`, and `day`. Information about the victim's name, age, race, sex, and location are included, as well as the `disposition` or status of the homicide case. 
+
+```{r}
+homi_status = homicide |> 
+  mutate(status = case_when(
+    disposition %in% c("Closed without arrest","Open/No arrest") ~ "unsolved",
+    disposition == "Closed by arrest" ~ "solved"
+  )) |>
+  group_by(city_state, status) |> 
+  summarize(number =n()) |>
+  pivot_wider(names_from=status, values_from=number, values_fill =0) |>
+  mutate(total = sum(solved, unsolved))
+
+homi_status  |>
+  select(-solved) |>
+  knitr::kable()
+```
+The above table shows the number of unsolved cases and the total number of homicides per city. 
+
+```{r}
+balt_md_prop = homicide |>
+  filter(city_state == "Baltimore, MD") |>
+  mutate(status = case_when(
+    disposition %in% c("Closed without arrest","Open/No arrest") ~ "unsolved",
+    disposition == "Closed by arrest" ~ "solved"
+  ))  |>
+  group_by(status) |> 
+  summarize(number =n()) |>
+  pivot_wider(names_from=status, values_from=number, values_fill =0) |>
+  mutate(total = sum(solved, unsolved)) |> select(unsolved,total)
+
+balt_md = prop.test(balt_md_prop$unsolved, balt_md_prop$total) |>
+  broom::tidy() |>
+  janitor::clean_names()
+
+balt_md |> select(estimate,conf_low, conf_high) |> knitr::kable()
+
+```
+The estimated proportion and confidence interval for unsolved homicides in Baltimore, MD are above.
+
 
 ## Question 2: iterate the importing and tidying of data
 First I used `list.files` to make a list of the file names. Then I created a function that would read in a file and tidy it into the proper format. Then I used `map` with this new function and the list of names, and `bind_rows` to create the final dataframe.
@@ -76,7 +124,7 @@ sim_mean_ttest = function(mu) {
 
 sim_results = expand_grid(
   mu_df = c(0,1,2,3,4,5,6),
-  iter = 1:5000
+  iter = 1:50 #changing for now to avoid long knit times
 ) |>
   mutate(
     estimate = map(mu_df, sim_mean_ttest)
@@ -90,7 +138,7 @@ sim_results |>
   group_by(mu_df) |>
   summarize(
     rej = sum(pval < 0.05),
-    prop = rej/5000
+    prop = rej/50 # see above comment about long knit times
   ) |>
   ggplot(aes(x=mu_df, y=prop)) + geom_line()
 ```
