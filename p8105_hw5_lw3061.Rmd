@@ -65,11 +65,42 @@ balt_md = prop.test(balt_md_prop$unsolved, balt_md_prop$total) |>
   broom::tidy() |>
   janitor::clean_names()
 
-balt_md |> select(estimate,conf_low, conf_high) |> knitr::kable()
+balt_md_est = balt_md |> select(estimate,conf_low, conf_high) 
+
+balt_md_est |> knitr::kable()
+```
+The estimated proportion and 95% confidence interval for unsolved homicides in Baltimore, MD are in the table above.
+
+```{r}
+city_list = homicide |> group_by(city_state) |> select(city_state) |> summarize()
+
+homi_function = function(name) {
+  
+  cityprop = homicide |>
+    filter(city_state == name) |>
+    mutate(status = case_when(
+    disposition %in% c("Closed without arrest","Open/No arrest") ~ "unsolved",
+    disposition == "Closed by arrest" ~ "solved") ) |>
+    group_by(status) |> 
+    summarize(number =n()) |>
+    pivot_wider(names_from=status, values_from=number, values_fill =0) |>
+    mutate(total = sum(solved, unsolved)) |> select(unsolved,total)
+  
+  city = prop.test(cityprop$unsolved, cityprop$total) |>
+  broom::tidy() |>
+  janitor::clean_names()
+  
+  output = city |> select(estimate,conf_low, conf_high) 
+  
+  output
+  
+}
+
+homi_function("Charlotte, NC")
+homi_function("Baltimore, MD")
+homi_function("Buffalo, NY")
 
 ```
-The estimated proportion and confidence interval for unsolved homicides in Baltimore, MD are above.
-
 
 ## Question 2: iterate the importing and tidying of data
 First I used `list.files` to make a list of the file names. Then I created a function that would read in a file and tidy it into the proper format. Then I used `map` with this new function and the list of names, and `bind_rows` to create the final dataframe.
