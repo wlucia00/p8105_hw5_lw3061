@@ -27,7 +27,8 @@ homicide =
   read_csv("homicide-data.csv") |> 
   janitor::clean_names() |>
   separate(reported_date, into=c("year","month","day"), sep=c(4,6)) |>
-  mutate(city_state = str_c(city, ", ", state))
+  mutate(city_state = str_c(city, ", ", state)) |>
+  filter(city_state != "Tulsa, AL") 
 ```
 
 The raw data has `r nrow(homicide)` homicides between 2010 and 2016. It includes information about the `reported_date` of murder, which I separated into `year`,`month`, and `day`. Information about the victim's name, age, race, sex, and location are included, as well as the `disposition` or status of the homicide case. 
@@ -38,69 +39,57 @@ homi_status = homicide |>
     disposition %in% c("Closed without arrest","Open/No arrest") ~ "unsolved",
     disposition == "Closed by arrest" ~ "solved"
   )) |>
-  group_by(city_state, status) |> 
-  summarize(number =n()) |>
-  pivot_wider(names_from=status, values_from=number, values_fill =0) |>
-  mutate(total = sum(solved, unsolved))
+  select(city_state, disposition, status) |> 
+  group_by(city_state) |>
+  summarize(total =n(),
+            unsolved = sum(status == "unsolved")) 
 
 homi_status  |>
-  select(-solved) |>
   knitr::kable()
 ```
 The above table shows the number of unsolved cases and the total number of homicides per city. 
 
 ```{r}
-balt_md_prop = homicide |>
-  filter(city_state == "Baltimore, MD") |>
-  mutate(status = case_when(
-    disposition %in% c("Closed without arrest","Open/No arrest") ~ "unsolved",
-    disposition == "Closed by arrest" ~ "solved"
-  ))  |>
-  group_by(status) |> 
-  summarize(number =n()) |>
-  pivot_wider(names_from=status, values_from=number, values_fill =0) |>
-  mutate(total = sum(solved, unsolved)) |> select(unsolved,total)
-
-balt_md = prop.test(balt_md_prop$unsolved, balt_md_prop$total) |>
+balt_md = 
+  prop.test(
+    x = filter(homi_status, city_state=="Baltimore, MD") |> pull(unsolved),
+    n = filter(homi_status, city_state=="Baltimore, MD") |> pull(total)
+  )|>
   broom::tidy() |>
   janitor::clean_names()
 
-balt_md_est = balt_md |> select(estimate,conf_low, conf_high) 
-
-balt_md_est |> knitr::kable()
+balt_md |> select(estimate,conf_low, conf_high) |> knitr::kable()
 ```
 The estimated proportion and 95% confidence interval for unsolved homicides in Baltimore, MD are in the table above.
 
 ```{r}
-city_list = homicide |> group_by(city_state) |> select(city_state) |> summarize()
-
-homi_function = function(name) {
-  
-  cityprop = homicide |>
-    filter(city_state == name) |>
-    mutate(status = case_when(
-    disposition %in% c("Closed without arrest","Open/No arrest") ~ "unsolved",
-    disposition == "Closed by arrest" ~ "solved") ) |>
-    group_by(status) |> 
-    summarize(number =n()) |>
-    pivot_wider(names_from=status, values_from=number, values_fill =0) |>
-    mutate(total = sum(solved, unsolved)) |> select(unsolved,total)
-  
-  city = prop.test(cityprop$unsolved, cityprop$total) |>
-  broom::tidy() |>
-  janitor::clean_names()
-  
-  output = city |> select(estimate,conf_low, conf_high) 
-  
-  output
-  
-}
-
-homi_function("Charlotte, NC")
-homi_function("Baltimore, MD")
-homi_function("Buffalo, NY")
+all_cities =
+  homi_status |>
+  mutate(
+    prop = map2(unsolved, total, \(x,n) prop.test(x=x,n=n)),
+    tidied = map(prop, broom::tidy)
+  ) |>
+  select(-prop) |>
+  unnest(tidied) |>
+  janitor::clean_names() |>
+  select(city_state, estimate, conf_low, conf_high) |>
+  mutate(
+    city_state = fct_reorder(city_state, estimate)
+  )
 
 ```
+
+The above code runs `prop.test` on all 50 cities.
+
+```{r}
+all_cities |>
+  ggplot(aes(x=city_state, y=estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=conf_low, ymax=conf_high)) +
+   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+The range of proportions of homicides unsolved goes from around 0.27 to 0.74. 
 
 ## Question 2: iterate the importing and tidying of data
 First I used `list.files` to make a list of the file names. Then I created a function that would read in a file and tidy it into the proper format. Then I used `map` with this new function and the list of names, and `bind_rows` to create the final dataframe.
@@ -155,7 +144,7 @@ sim_mean_ttest = function(mu) {
 
 sim_results = expand_grid(
   mu_df = c(0,1,2,3,4,5,6),
-  iter = 1:50 #changing for now to avoid long knit times
+  iter = 1:5000
 ) |>
   mutate(
     estimate = map(mu_df, sim_mean_ttest)
@@ -169,7 +158,7 @@ sim_results |>
   group_by(mu_df) |>
   summarize(
     rej = sum(pval < 0.05),
-    prop = rej/50 # see above comment about long knit times
+    prop = rej/5000
   ) |>
   ggplot(aes(x=mu_df, y=prop)) + geom_line()
 ```
@@ -194,5 +183,6 @@ ggplot(true_df, aes(x=mu_df, y=mean_mu)) +
   geom_line() +
   geom_line(data=rej_df, color="red")
 ```
+
 In this plot, the red line shows the association between true mu and average estimate of mu-hat for only those samples where the null was rejected, while the black line contains all samples. The sample average of mu-hat for only the null-rejected data does not approximate the true value of mu when the effect size is smaller, around 0-3. Around 3-4, the red line starts to approach the black line and does approximate the true value of mu as effect size increases.
 
